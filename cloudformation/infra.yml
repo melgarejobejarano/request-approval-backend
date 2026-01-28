@@ -1,18 +1,28 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Infrastructure for Client Request & Approval System
+Description: Infrastructure stack for Client Request & Approval System
 
 Resources:
+  # ---------------------------------------------------------------------------
+  # S3 bucket for Lambda deployment artifacts
+  # (CloudFormation auto-generates a unique name)
+  # ---------------------------------------------------------------------------
   LambdaArtifactsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: client-requests-artifacts-eu-central-1
       VersioningConfiguration:
         Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
+  # ---------------------------------------------------------------------------
+  # DynamoDB table for client requests
+  # ---------------------------------------------------------------------------
   ClientRequestsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: ClientRequests
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: id
@@ -22,7 +32,16 @@ Resources:
           KeyType: HASH
 
 Outputs:
+  # ---------------------------------------------------------------------------
+  # S3 bucket name (used by GitHub Actions to upload Lambda ZIPs)
+  # ---------------------------------------------------------------------------
   ArtifactsBucket:
+    Description: S3 bucket used for Lambda deployment artifacts
     Value: !Ref LambdaArtifactsBucket
+
+  # ---------------------------------------------------------------------------
+  # DynamoDB table name
+  # ---------------------------------------------------------------------------
   DynamoTable:
+    Description: DynamoDB table name
     Value: !Ref ClientRequestsTable
