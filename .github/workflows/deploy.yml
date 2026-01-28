@@ -1,93 +1,130 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: Client Request & Approval System Backend
+name: Deploy Backend via CloudFormation
 
-Parameters:
-  Environment:
-    Type: String
-    Default: production
+on:
+  push:
+    branches:
+      - main
 
-  LambdaS3Bucket:
-    Type: String
-    Default: ''
-    Description: Optional S3 bucket for Lambda artifacts
+env:
+  AWS_REGION: eu-central-1
+  ENVIRONMENT: production
+  STACK_NAME: client-requests-production
 
-  LambdaS3Key:
-    Type: String
-    Default: ''
-    Description: Optional S3 key for Lambda artifacts
+jobs:
+  deploy:
+    name: Build and Deploy Backend
+    runs-on: ubuntu-latest
 
-  AllowedOrigins:
-    Type: String
-    Default: '*'
+    steps:
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-Conditions:
-  UseProvidedLambdaArtifacts: !And
-    - !Not [!Equals [!Ref LambdaS3Bucket, '']]
-    - !Not [!Equals [!Ref LambdaS3Key, '']]
+      # ------------------------------------------------------------
+      # Node setup
+      # ------------------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
 
-Resources:
-  # ---------------------------------------------------------------------------
-  # S3 Bucket for Lambda artifacts (created only if not provided)
-  # ---------------------------------------------------------------------------
-  LambdaArtifactsBucket:
-    Type: AWS::S3::Bucket
-    Condition: !Not [UseProvidedLambdaArtifacts]
-    Properties:
-      BucketName: !Sub '${AWS::StackName}-lambda-artifacts'
-      VersioningConfiguration:
-        Status: Enabled
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
+      # ------------------------------------------------------------
+      # Install & build
+      # ------------------------------------------------------------
+      - name: Install dependencies
+        run: npm ci
 
-  # ---------------------------------------------------------------------------
-  # IAM Role for Lambda execution
-  # ---------------------------------------------------------------------------
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${AWS::StackName}-lambda-role'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+      - name: Build backend
+        run: npm run build
 
-  # ---------------------------------------------------------------------------
-  # Example Lambda (repeat pattern for others)
-  # ---------------------------------------------------------------------------
-  CreateRequestFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${AWS::StackName}-create-request'
-      Runtime: nodejs18.x
-      Handler: CreateRequest.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !If
-          - UseProvidedLambdaArtifacts
-          - !Ref LambdaS3Bucket
-          - !Ref LambdaArtifactsBucket
-        S3Key: !If
-          - UseProvidedLambdaArtifacts
-          - !Ref LambdaS3Key
-          - 'bootstrap.zip'
-      Timeout: 30
-      Environment:
-        Variables:
-          ENVIRONMENT: !Ref Environment
+      # ------------------------------------------------------------
+      # Package Lambda code
+      # ------------------------------------------------------------
+      - name: Create Lambda deployment package
+        run: |
+          mkdir -p package
+          cp -r dist/* package/
+          cp -r node_modules package/
 
-Outputs:
-  LambdaArtifactsBucketName:
-    Description: S3 bucket used for Lambda artifacts
-    Value: !If
-      - UseProvidedLambdaArtifacts
-      - !Ref LambdaS3Bucket
-      - !Ref LambdaArtifactsBucket
+          cd package
+          zip -qr ../deployment-${{ github.sha }}.zip .
+          cd ..
+
+          rm -rf package
+          ls -lh deployment-${{ github.sha }}.zip
+
+      # ------------------------------------------------------------
+      # AWS credentials
+      # ------------------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ------------------------------------------------------------
+      # Deploy infrastructure (creates S3 bucket automatically)
+      # ------------------------------------------------------------
+      - name: Deploy infrastructure
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/template.yml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=${{ env.ENVIRONMENT }}
+
+      # ------------------------------------------------------------
+      # Get bucket created by CloudFormation
+      # ------------------------------------------------------------
+      - name: Get Lambda artifacts bucket
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactsBucketName'].OutputValue" \
+            --output text)
+
+          echo "Using bucket: $BUCKET"
+          echo "LAMBDA_BUCKET=$BUCKET" >> $GITHUB_ENV
+
+      # ------------------------------------------------------------
+      # Upload ZIP to S3
+      # ------------------------------------------------------------
+      - name: Upload Lambda ZIP to S3
+        run: |
+          aws s3 cp \
+            deployment-${{ github.sha }}.zip \
+            s3://${{ env.LAMBDA_BUCKET }}/deployment-${{ github.sha }}.zip
+
+      # ------------------------------------------------------------
+      # Deploy application (update Lambdas)
+      # ------------------------------------------------------------
+      - name: Deploy application
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/template.yml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=${{ env.ENVIRONMENT }} \
+              LambdaS3Bucket=${{ env.LAMBDA_BUCKET }} \
+              LambdaS3Key=deployment-${{ github.sha }}.zip \
+              AllowedOrigins="*"
+
+      # ------------------------------------------------------------
+      # Outputs
+      # ------------------------------------------------------------
+      - name: Show outputs
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" \
+            --output text)
+
+          echo "API URL: $API_URL"
