@@ -1,0 +1,1 @@
+{"version":3,"file":"approveRequest.d.ts","sourceRoot":"","sources":["../../../../src/infrastructure/aws/handlers/approveRequest.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,oBAAoB,EAAE,qBAAqB,EAAE,MAAM,YAAY,CAAC;AAazE;;;;;;;;;;;;;;;;;GAiBG;AACH,eAAO,MAAM,OAAO,GAAU,OAAO,oBAAoB,KAAG,OAAO,CAAC,qBAAqB,CA8CxF,CAAC"}

@@ -1,0 +1,727 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Client Request & Approval System - Infrastructure as Code
+  This template creates all AWS resources required to run the backend:
+  - DynamoDB table for storing requests
+  - IAM role for Lambda execution
+  - Lambda functions for API handlers
+  - API Gateway REST API with CORS
+  - API Gateway deployment and stage
+
+# =============================================================================
+# PARAMETERS
+# =============================================================================
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Deployment environment
+
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment package
+
+  LambdaS3Key:
+    Type: String
+    Default: deployment.zip
+    Description: S3 key for Lambda deployment package
+
+  JiraBaseUrl:
+    Type: String
+    Default: ''
+    Description: JIRA base URL (optional)
+
+  JiraUsername:
+    Type: String
+    Default: ''
+    Description: JIRA username (optional)
+
+  JiraApiToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: JIRA API token (optional)
+
+  JiraProjectKey:
+    Type: String
+    Default: REQ
+    Description: JIRA project key
+
+  AllowedOrigins:
+    Type: String
+    Default: '*'
+    Description: CORS allowed origins (comma-separated)
+
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 900
+    Description: Lambda function timeout in seconds
+
+  LambdaMemorySize:
+    Type: Number
+    Default: 256
+    AllowedValues:
+      - 128
+      - 256
+      - 512
+      - 1024
+    Description: Lambda function memory size in MB
+
+# =============================================================================
+# METADATA
+# =============================================================================
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment Configuration
+        Parameters:
+          - Environment
+      - Label:
+          default: Lambda Configuration
+        Parameters:
+          - LambdaS3Bucket
+          - LambdaS3Key
+          - LambdaTimeout
+          - LambdaMemorySize
+      - Label:
+          default: JIRA Integration (Optional)
+        Parameters:
+          - JiraBaseUrl
+          - JiraUsername
+          - JiraApiToken
+          - JiraProjectKey
+      - Label:
+          default: API Configuration
+        Parameters:
+          - AllowedOrigins
+
+# =============================================================================
+# RESOURCES
+# =============================================================================
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # DynamoDB Table
+  # ---------------------------------------------------------------------------
+  ClientRequestsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${Environment}-ClientRequests'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: clientId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: clientId-index
+          KeySchema:
+            - AttributeName: clientId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ---------------------------------------------------------------------------
+  # IAM Role for Lambda Execution
+  # ---------------------------------------------------------------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-ClientRequests-LambdaRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ClientRequestsTable.Arn
+                  - !Sub '${ClientRequestsTable.Arn}/index/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  # ---------------------------------------------------------------------------
+  # Lambda Functions
+  # ---------------------------------------------------------------------------
+  CreateRequestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-CreateRequest'
+      Description: Creates a new client request
+      Runtime: nodejs18.x
+      Handler: infrastructure/aws/handlers/createRequest.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          DYNAMODB_TABLE_NAME: !Ref ClientRequestsTable
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
+          JIRA_BASE_URL: !Ref JiraBaseUrl
+          JIRA_USERNAME: !Ref JiraUsername
+          JIRA_API_TOKEN: !Ref JiraApiToken
+          JIRA_PROJECT_KEY: !Ref JiraProjectKey
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  GetRequestsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-GetRequests'
+      Description: Retrieves list of requests based on user role
+      Runtime: nodejs18.x
+      Handler: infrastructure/aws/handlers/getRequests.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          DYNAMODB_TABLE_NAME: !Ref ClientRequestsTable
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  GetRequestByIdFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-GetRequestById'
+      Description: Retrieves a specific request by ID
+      Runtime: nodejs18.x
+      Handler: infrastructure/aws/handlers/getRequestById.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          DYNAMODB_TABLE_NAME: !Ref ClientRequestsTable
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  EstimateRequestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-EstimateRequest'
+      Description: Adds estimation to a request (INTERNAL users only)
+      Runtime: nodejs18.x
+      Handler: infrastructure/aws/handlers/estimateRequest.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          DYNAMODB_TABLE_NAME: !Ref ClientRequestsTable
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  ApproveRequestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-ApproveRequest'
+      Description: Approves or rejects a request (APPROVER users only)
+      Runtime: nodejs18.x
+      Handler: infrastructure/aws/handlers/approveRequest.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          DYNAMODB_TABLE_NAME: !Ref ClientRequestsTable
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
+          JIRA_BASE_URL: !Ref JiraBaseUrl
+          JIRA_USERNAME: !Ref JiraUsername
+          JIRA_API_TOKEN: !Ref JiraApiToken
+          JIRA_PROJECT_KEY: !Ref JiraProjectKey
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  # ---------------------------------------------------------------------------
+  # API Gateway REST API
+  # ---------------------------------------------------------------------------
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${Environment}-ClientRequestsAPI'
+      Description: Client Request & Approval System API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Resources
+  # ---------------------------------------------------------------------------
+  RequestsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: requests
+
+  RequestIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref RequestsResource
+      PathPart: '{id}'
+
+  EstimateResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref RequestIdResource
+      PathPart: estimate
+
+  ApproveResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref RequestIdResource
+      PathPart: approve
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Methods - POST /requests
+  # ---------------------------------------------------------------------------
+  PostRequestsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RequestsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateRequestFunction.Arn}/invocations'
+
+  PostRequestsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CreateRequestFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/requests'
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Methods - GET /requests
+  # ---------------------------------------------------------------------------
+  GetRequestsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RequestsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetRequestsFunction.Arn}/invocations'
+
+  GetRequestsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GetRequestsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/GET/requests'
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Methods - GET /requests/{id}
+  # ---------------------------------------------------------------------------
+  GetRequestByIdMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RequestIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetRequestByIdFunction.Arn}/invocations'
+
+  GetRequestByIdLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GetRequestByIdFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/GET/requests/*'
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Methods - PATCH /requests/{id}/estimate
+  # ---------------------------------------------------------------------------
+  PatchEstimateMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref EstimateResource
+      HttpMethod: PATCH
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${EstimateRequestFunction.Arn}/invocations'
+
+  PatchEstimateLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EstimateRequestFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/PATCH/requests/*/estimate'
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Methods - PATCH /requests/{id}/approve
+  # ---------------------------------------------------------------------------
+  PatchApproveMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApproveResource
+      HttpMethod: PATCH
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApproveRequestFunction.Arn}/invocations'
+
+  PatchApproveLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApproveRequestFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/PATCH/requests/*/approve'
+
+  # ---------------------------------------------------------------------------
+  # CORS - OPTIONS /requests
+  # ---------------------------------------------------------------------------
+  OptionsRequestsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RequestsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-User-Id,X-User-Role,X-User-Name'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # ---------------------------------------------------------------------------
+  # CORS - OPTIONS /requests/{id}
+  # ---------------------------------------------------------------------------
+  OptionsRequestIdMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RequestIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-User-Id,X-User-Role,X-User-Name'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # ---------------------------------------------------------------------------
+  # CORS - OPTIONS /requests/{id}/estimate
+  # ---------------------------------------------------------------------------
+  OptionsEstimateMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref EstimateResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-User-Id,X-User-Role,X-User-Name'"
+              method.response.header.Access-Control-Allow-Methods: "'PATCH,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # ---------------------------------------------------------------------------
+  # CORS - OPTIONS /requests/{id}/approve
+  # ---------------------------------------------------------------------------
+  OptionsApproveMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApproveResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-User-Id,X-User-Role,X-User-Name'"
+              method.response.header.Access-Control-Allow-Methods: "'PATCH,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Deployment
+  # ---------------------------------------------------------------------------
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PostRequestsMethod
+      - GetRequestsMethod
+      - GetRequestByIdMethod
+      - PatchEstimateMethod
+      - PatchApproveMethod
+      - OptionsRequestsMethod
+      - OptionsRequestIdMethod
+      - OptionsEstimateMethod
+      - OptionsApproveMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      Description: !Sub 'Deployment for ${Environment} environment'
+
+  # ---------------------------------------------------------------------------
+  # API Gateway Stage
+  # ---------------------------------------------------------------------------
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref ApiGateway
+      DeploymentId: !Ref ApiDeployment
+      StageName: !Ref Environment
+      Description: !Sub '${Environment} stage'
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+          MetricsEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  # ---------------------------------------------------------------------------
+  # CloudWatch Log Group for API Gateway
+  # ---------------------------------------------------------------------------
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${Environment}-ClientRequestsAPI'
+      RetentionInDays: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+Outputs:
+  ApiGatewayId:
+    Description: API Gateway REST API ID
+    Value: !Ref ApiGateway
+    Export:
+      Name: !Sub '${Environment}-ClientRequests-ApiGatewayId'
+
+  ApiGatewayUrl:
+    Description: API Gateway Base URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-ClientRequests-ApiUrl'
+
+  DynamoDBTableName:
+    Description: DynamoDB table name
+    Value: !Ref ClientRequestsTable
+    Export:
+      Name: !Sub '${Environment}-ClientRequests-TableName'
+
+  DynamoDBTableArn:
+    Description: DynamoDB table ARN
+    Value: !GetAtt ClientRequestsTable.Arn
+    Export:
+      Name: !Sub '${Environment}-ClientRequests-TableArn'
+
+  LambdaExecutionRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${Environment}-ClientRequests-LambdaRoleArn'
+
+  CreateRequestFunctionArn:
+    Description: CreateRequest Lambda function ARN
+    Value: !GetAtt CreateRequestFunction.Arn
+
+  GetRequestsFunctionArn:
+    Description: GetRequests Lambda function ARN
+    Value: !GetAtt GetRequestsFunction.Arn
+
+  GetRequestByIdFunctionArn:
+    Description: GetRequestById Lambda function ARN
+    Value: !GetAtt GetRequestByIdFunction.Arn
+
+  EstimateRequestFunctionArn:
+    Description: EstimateRequest Lambda function ARN
+    Value: !GetAtt EstimateRequestFunction.Arn
+
+  ApproveRequestFunctionArn:
+    Description: ApproveRequest Lambda function ARN
+    Value: !GetAtt ApproveRequestFunction.Arn
+
+  Endpoints:
+    Description: Available API endpoints
+    Value: !Sub |
+      POST   ${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/requests
+      GET    ${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/requests
+      GET    ${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/requests/{id}
+      PATCH  ${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/requests/{id}/estimate
+      PATCH  ${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/requests/{id}/approve

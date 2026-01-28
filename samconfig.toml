@@ -1,0 +1,22 @@
+# AWS SAM CLI Configuration
+# Run: sam deploy --guided to customize these values
+
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "client-request-approval-system"
+resolve_s3 = true
+s3_prefix = "client-request-approval-system"
+region = "eu-central-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Environment=\"production\""
+
+[development.deploy.parameters]
+stack_name = "client-request-approval-system-dev"
+resolve_s3 = true
+s3_prefix = "client-request-approval-system-dev"
+region = "eu-central-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Environment=\"development\""

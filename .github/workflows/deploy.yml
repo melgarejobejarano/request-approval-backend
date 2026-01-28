@@ -1,0 +1,176 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+env:
+  AWS_REGION: eu-central-1
+  STACK_NAME_PREFIX: client-requests
+
+jobs:
+  build:
+    name: Build Lambda Package
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.upload.outputs.artifact-name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Create deployment package
+        run: |
+          mkdir -p deployment
+          cp -r dist/* deployment/
+          cp -r node_modules deployment/
+          cd deployment
+          zip -r ../deployment.zip .
+
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-deployment-${{ github.sha }}
+          path: deployment.zip
+          retention-days: 1
+
+  deploy:
+    name: Deploy Infrastructure
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'development') }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set environment
+        id: env
+        run: |
+          if [ "${{ github.event.inputs.environment }}" != "" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+          else
+            echo "environment=development" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-deployment-${{ github.sha }}
+
+      - name: Upload to S3
+        run: |
+          BUCKET_NAME="${{ env.STACK_NAME_PREFIX }}-deployments-${{ steps.env.outputs.environment }}"
+          
+          # Create bucket if it doesn't exist
+          aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null || \
+            aws s3 mb "s3://$BUCKET_NAME" --region ${{ env.AWS_REGION }}
+          
+          # Upload deployment package
+          aws s3 cp deployment.zip "s3://$BUCKET_NAME/deployment-${{ github.sha }}.zip"
+          
+          echo "S3_BUCKET=$BUCKET_NAME" >> $GITHUB_ENV
+          echo "S3_KEY=deployment-${{ github.sha }}.zip" >> $GITHUB_ENV
+
+      - name: Validate CloudFormation template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/template.yml
+
+      - name: Deploy CloudFormation stack
+        run: |
+          STACK_NAME="${{ env.STACK_NAME_PREFIX }}-${{ steps.env.outputs.environment }}"
+          
+          aws cloudformation deploy \
+            --template-file cloudformation/template.yml \
+            --stack-name "$STACK_NAME" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              Environment=${{ steps.env.outputs.environment }} \
+              LambdaS3Bucket=${{ env.S3_BUCKET }} \
+              LambdaS3Key=${{ env.S3_KEY }} \
+              JiraBaseUrl="${{ secrets.JIRA_BASE_URL }}" \
+              JiraUsername="${{ secrets.JIRA_USERNAME }}" \
+              JiraApiToken="${{ secrets.JIRA_API_TOKEN }}" \
+              JiraProjectKey="${{ secrets.JIRA_PROJECT_KEY || 'REQ' }}" \
+              AllowedOrigins="${{ vars.ALLOWED_ORIGINS || '*' }}" \
+            --tags \
+              Environment=${{ steps.env.outputs.environment }} \
+              Application=ClientRequestApprovalSystem \
+              ManagedBy=GitHubActions \
+            --no-fail-on-empty-changeset
+
+      - name: Get stack outputs
+        id: outputs
+        run: |
+          STACK_NAME="${{ env.STACK_NAME_PREFIX }}-${{ steps.env.outputs.environment }}"
+          
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" \
+            --output text)
+          
+          echo "api-url=$API_URL" >> $GITHUB_OUTPUT
+          echo "## Deployment Successful! :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ steps.env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Available Endpoints" >> $GITHUB_STEP_SUMMARY
+          echo "| Method | Endpoint | Role |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|----------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| POST | \`/requests\` | CLIENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| GET | \`/requests\` | ALL |" >> $GITHUB_STEP_SUMMARY
+          echo "| GET | \`/requests/{id}\` | ALL |" >> $GITHUB_STEP_SUMMARY
+          echo "| PATCH | \`/requests/{id}/estimate\` | INTERNAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| PATCH | \`/requests/{id}/approve\` | APPROVER |" >> $GITHUB_STEP_SUMMARY
+
+    outputs:
+      api-url: ${{ steps.outputs.outputs.api-url }}
+      environment: ${{ steps.env.outputs.environment }}
+
+  notify:
+    name: Notify
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Deployment summary
+        run: |
+          echo "Deployment to ${{ needs.deploy.outputs.environment }} completed"
+          echo "API URL: ${{ needs.deploy.outputs.api-url }}"

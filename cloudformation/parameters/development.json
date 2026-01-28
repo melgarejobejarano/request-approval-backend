@@ -1,0 +1,26 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "development"
+  },
+  {
+    "ParameterKey": "LambdaS3Bucket",
+    "ParameterValue": "client-requests-deployments-development"
+  },
+  {
+    "ParameterKey": "LambdaS3Key",
+    "ParameterValue": "deployment.zip"
+  },
+  {
+    "ParameterKey": "AllowedOrigins",
+    "ParameterValue": "http://localhost:3000,http://localhost:5173"
+  },
+  {
+    "ParameterKey": "LambdaTimeout",
+    "ParameterValue": "30"
+  },
+  {
+    "ParameterKey": "LambdaMemorySize",
+    "ParameterValue": "256"
+  }
+]

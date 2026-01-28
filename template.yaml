@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Client Request & Approval System - Production Backend
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+  JiraBaseUrl:
+    Type: String
+    Default: ''
+    Description: JIRA base URL (e.g., https://your-domain.atlassian.net)
+  JiraUsername:
+    Type: String
+    Default: ''
+    Description: JIRA username (email)
+  JiraApiToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: JIRA API token
+  JiraProjectKey:
+    Type: String
+    Default: REQ
+    Description: JIRA project key for issues
+  AllowedOrigins:
+    Type: String
+    Default: 'http://localhost:3000'
+    Description: Comma-separated list of allowed CORS origins
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs18.x
+    MemorySize: 256
+    Environment:
+      Variables:
+        NODE_ENV: !Ref Environment
+        DYNAMODB_TABLE_NAME: !Ref RequestsTable
+        JIRA_BASE_URL: !Ref JiraBaseUrl
+        JIRA_USERNAME: !Ref JiraUsername
+        JIRA_API_TOKEN: !Ref JiraApiToken
+        JIRA_PROJECT_KEY: !Ref JiraProjectKey
+        ALLOWED_ORIGINS: !Ref AllowedOrigins
+    Architectures:
+      - x86_64
+
+Resources:
+  # DynamoDB Table
+  RequestsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Environment}-ClientRequests'
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: clientId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: clientId-index
+          KeySchema:
+            - AttributeName: clientId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: ClientRequestApprovalSystem
+
+  # API Gateway
+  RequestsApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,PATCH,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-User-Id,X-User-Role,X-User-Name'"
+        AllowOrigin: "'*'"
+        MaxAge: "'86400'"
+      GatewayResponses:
+        DEFAULT_4xx:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-User-Id,X-User-Role,X-User-Name'"
+        DEFAULT_5xx:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-User-Id,X-User-Role,X-User-Name'"
+
+  # Lambda Functions
+  CreateRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-CreateRequest'
+      CodeUri: dist/
+      Handler: infrastructure/aws/handlers/createRequest.handler
+      Description: Creates a new client request
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RequestsTable
+      Events:
+        CreateRequest:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RequestsApi
+            Path: /requests
+            Method: POST
+
+  GetRequestsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-GetRequests'
+      CodeUri: dist/
+      Handler: infrastructure/aws/handlers/getRequests.handler
+      Description: Retrieves requests based on user role
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref RequestsTable
+      Events:
+        GetRequests:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RequestsApi
+            Path: /requests
+            Method: GET
+
+  GetRequestByIdFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-GetRequestById'
+      CodeUri: dist/
+      Handler: infrastructure/aws/handlers/getRequestById.handler
+      Description: Retrieves a specific request by ID
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref RequestsTable
+      Events:
+        GetRequestById:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RequestsApi
+            Path: /requests/{id}
+            Method: GET
+
+  EstimateRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-EstimateRequest'
+      CodeUri: dist/
+      Handler: infrastructure/aws/handlers/estimateRequest.handler
+      Description: Adds estimation to a request (INTERNAL users)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RequestsTable
+      Events:
+        EstimateRequest:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RequestsApi
+            Path: /requests/{id}/estimate
+            Method: PATCH
+
+  ApproveRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-ApproveRequest'
+      CodeUri: dist/
+      Handler: infrastructure/aws/handlers/approveRequest.handler
+      Description: Approves or rejects a request (APPROVER users)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RequestsTable
+      Events:
+        ApproveRequest:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RequestsApi
+            Path: /requests/{id}/approve
+            Method: PATCH
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${RequestsApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-RequestsApiEndpoint'
+
+  RequestsTableName:
+    Description: DynamoDB table name
+    Value: !Ref RequestsTable
+    Export:
+      Name: !Sub '${Environment}-RequestsTableName'
+
+  RequestsTableArn:
+    Description: DynamoDB table ARN
+    Value: !GetAtt RequestsTable.Arn
+    Export:
+      Name: !Sub '${Environment}-RequestsTableArn'
