@@ -1,190 +1,93 @@
-# =============================================================================
-# Client Request & Approval System - CloudFormation CI/CD
-# =============================================================================
-#
-# This workflow:
-# - Builds the backend
-# - Packages Lambda code into a ZIP
-# - Deploys infrastructure using CloudFormation
-# - Lets CloudFormation create the S3 bucket automatically
-# - Uploads the ZIP to that bucket
-# - Updates the stack with the new Lambda code
-#
-# NO manual AWS steps.
-# NO AWS CLI resource creation outside CloudFormation.
-# Fully reproducible and enterprise-ready.
-# =============================================================================
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Client Request & Approval System Backend
 
-name: Deploy Backend via CloudFormation
+Parameters:
+  Environment:
+    Type: String
+    Default: production
 
-on:
-  push:
-    branches:
-      - main
+  LambdaS3Bucket:
+    Type: String
+    Default: ''
+    Description: Optional S3 bucket for Lambda artifacts
 
-env:
-  AWS_REGION: eu-central-1
-  ENVIRONMENT: production
-  STACK_NAME: client-requests-production
+  LambdaS3Key:
+    Type: String
+    Default: ''
+    Description: Optional S3 key for Lambda artifacts
 
-concurrency:
-  group: cloudformation-deploy
-  cancel-in-progress: false
+  AllowedOrigins:
+    Type: String
+    Default: '*'
 
-jobs:
-  deploy:
-    name: Build and Deploy Backend
-    runs-on: ubuntu-latest
+Conditions:
+  UseProvidedLambdaArtifacts: !And
+    - !Not [!Equals [!Ref LambdaS3Bucket, '']]
+    - !Not [!Equals [!Ref LambdaS3Key, '']]
 
-    steps:
-      # -----------------------------------------------------------------------
-      # Checkout source
-      # -----------------------------------------------------------------------
-      - name: Checkout repository
-        uses: actions/checkout@v4
+Resources:
+  # ---------------------------------------------------------------------------
+  # S3 Bucket for Lambda artifacts (created only if not provided)
+  # ---------------------------------------------------------------------------
+  LambdaArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Condition: !Not [UseProvidedLambdaArtifacts]
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-lambda-artifacts'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
-      # -----------------------------------------------------------------------
-      # Setup Node.js
-      # -----------------------------------------------------------------------
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
+  # ---------------------------------------------------------------------------
+  # IAM Role for Lambda execution
+  # ---------------------------------------------------------------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
 
-      # -----------------------------------------------------------------------
-      # Install dependencies
-      # -----------------------------------------------------------------------
-      - name: Install dependencies
-        run: npm ci
+  # ---------------------------------------------------------------------------
+  # Example Lambda (repeat pattern for others)
+  # ---------------------------------------------------------------------------
+  CreateRequestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-create-request'
+      Runtime: nodejs18.x
+      Handler: CreateRequest.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If
+          - UseProvidedLambdaArtifacts
+          - !Ref LambdaS3Bucket
+          - !Ref LambdaArtifactsBucket
+        S3Key: !If
+          - UseProvidedLambdaArtifacts
+          - !Ref LambdaS3Key
+          - 'bootstrap.zip'
+      Timeout: 30
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
 
-      # -----------------------------------------------------------------------
-      # Build backend
-      # -----------------------------------------------------------------------
-      - name: Build backend
-        run: npm run build
-
-      # -----------------------------------------------------------------------
-      # Create Lambda ZIP package
-      # -----------------------------------------------------------------------
-      - name: Create deployment package
-        run: |
-          echo "Creating Lambda deployment package..."
-
-          mkdir -p package
-          cp -r dist/* package/
-          cp -r node_modules package/
-
-          cd package
-          zip -qr ../deployment-${{ github.sha }}.zip .
-          cd ..
-
-          rm -rf package
-
-          echo "Package created:"
-          ls -lh deployment-${{ github.sha }}.zip
-
-      # -----------------------------------------------------------------------
-      # Configure AWS credentials
-      # -----------------------------------------------------------------------
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # -----------------------------------------------------------------------
-      # FIRST CloudFormation deploy (infra only)
-      # This creates the S3 bucket automatically if it does not exist
-      # -----------------------------------------------------------------------
-      - name: Deploy infrastructure (create/update stack)
-        run: |
-          aws cloudformation deploy \
-            --template-file cloudformation/template.yml \
-            --stack-name ${{ env.STACK_NAME }} \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              Environment="${{ env.ENVIRONMENT }}"
-
-      # -----------------------------------------------------------------------
-      # Get S3 bucket name created by CloudFormation
-      # -----------------------------------------------------------------------
-      - name: Get Lambda artifacts bucket name
-        run: |
-          BUCKET_NAME=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactsBucketName'].OutputValue" \
-            --output text)
-
-          echo "Lambda artifacts bucket: ${BUCKET_NAME}"
-          echo "LAMBDA_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
-
-      # -----------------------------------------------------------------------
-      # Upload ZIP to the automatically created bucket
-      # -----------------------------------------------------------------------
-      - name: Upload deployment package to S3
-        run: |
-          S3_KEY="deployment-${{ github.sha }}.zip"
-
-          aws s3 cp \
-            deployment-${{ github.sha }}.zip \
-            s3://${{ env.LAMBDA_BUCKET }}/${S3_KEY}
-
-          echo "Uploaded to s3://${{ env.LAMBDA_BUCKET }}/${S3_KEY}"
-
-      # -----------------------------------------------------------------------
-      # FINAL CloudFormation deploy (update Lambdas with new code)
-      # -----------------------------------------------------------------------
-      - name: Deploy application (update Lambda code)
-        run: |
-          aws cloudformation deploy \
-            --template-file cloudformation/template.yml \
-            --stack-name ${{ env.STACK_NAME }} \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              Environment="${{ env.ENVIRONMENT }}" \
-              LambdaS3Bucket="${{ env.LAMBDA_BUCKET }}" \
-              LambdaS3Key="deployment-${{ github.sha }}.zip" \
-              AllowedOrigins="*" \
-            --tags \
-              Environment="${{ env.ENVIRONMENT }}" \
-              Application="ClientRequestApprovalSystem" \
-              ManagedBy="GitHubActions" \
-              CommitSHA="${{ github.sha }}"
-
-      # -----------------------------------------------------------------------
-      # Show stack outputs
-      # -----------------------------------------------------------------------
-      - name: Show deployment outputs
-        run: |
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" \
-            --output text)
-
-          TABLE_NAME=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='DynamoDBTableName'].OutputValue" \
-            --output text)
-
-          echo ""
-          echo "========================================"
-          echo "DEPLOYMENT SUCCESSFUL"
-          echo "========================================"
-          echo "API URL:        ${API_URL}"
-          echo "DynamoDB Table: ${TABLE_NAME}"
-          echo "========================================"
-
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## Backend Deployment Complete
-
-          | Output | Value |
-          |-------|-------|
-          | **API URL** | \`${API_URL}\` |
-          | **DynamoDB Table** | \`${TABLE_NAME}\` |
-          | **Stack Name** | \`${{ env.STACK_NAME }}\` |
-          | **Commit** | \`${{ github.sha }}\` |
-          EOF
+Outputs:
+  LambdaArtifactsBucketName:
+    Description: S3 bucket used for Lambda artifacts
+    Value: !If
+      - UseProvidedLambdaArtifacts
+      - !Ref LambdaS3Bucket
+      - !Ref LambdaArtifactsBucket
