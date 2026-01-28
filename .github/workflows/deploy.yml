@@ -1,4 +1,4 @@
-name: Deploy Backend via CloudFormation
+name: Deploy Backend via CloudFormation (Infra + App)
 
 on:
   push:
@@ -7,8 +7,6 @@ on:
 
 env:
   AWS_REGION: eu-central-1
-  ENVIRONMENT: production
-  STACK_NAME: client-requests-production
 
 jobs:
   deploy:
@@ -16,49 +14,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ------------------------------------------------------------
-      # Checkout
-      # ------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 1. Checkout code
+      # -----------------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # Node setup
-      # ------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 2. Setup Node.js
+      # -----------------------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
 
-      # ------------------------------------------------------------
-      # Install & build
-      # ------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 3. Install dependencies
+      # -----------------------------------------------------------------------
       - name: Install dependencies
         run: npm ci
 
+      # -----------------------------------------------------------------------
+      # 4. Build backend
+      # -----------------------------------------------------------------------
       - name: Build backend
         run: npm run build
 
-      # ------------------------------------------------------------
-      # Package Lambda code
-      # ------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 5. Create Lambda ZIP package
+      # -----------------------------------------------------------------------
       - name: Create Lambda deployment package
         run: |
+          echo "Packaging Lambda code..."
           mkdir -p package
           cp -r dist/* package/
           cp -r node_modules package/
-
           cd package
           zip -qr ../deployment-${{ github.sha }}.zip .
           cd ..
-
           rm -rf package
           ls -lh deployment-${{ github.sha }}.zip
 
-      # ------------------------------------------------------------
-      # AWS credentials
-      # ------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 6. Configure AWS credentials
+      # -----------------------------------------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -66,65 +66,77 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ------------------------------------------------------------
-      # Deploy infrastructure (creates S3 bucket automatically)
-      # ------------------------------------------------------------
-      - name: Deploy infrastructure
+      # -----------------------------------------------------------------------
+      # 7. Deploy INFRASTRUCTURE stack (S3, DynamoDB, etc.)
+      # -----------------------------------------------------------------------
+      - name: Deploy infrastructure stack
         run: |
+          echo "Deploying infrastructure stack..."
           aws cloudformation deploy \
-            --template-file cloudformation/template.yml \
-            --stack-name ${{ env.STACK_NAME }} \
+            --template-file cloudformation/infra.yml \
+            --stack-name client-requests-infra \
             --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              Environment=${{ env.ENVIRONMENT }}
+            --no-fail-on-empty-changeset
 
-      # ------------------------------------------------------------
-      # Get bucket created by CloudFormation
-      # ------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 8. Get artifacts bucket from infra stack outputs
+      # -----------------------------------------------------------------------
       - name: Get Lambda artifacts bucket
         run: |
           BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactsBucketName'].OutputValue" \
+            --stack-name client-requests-infra \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucket'].OutputValue" \
             --output text)
 
-          echo "Using bucket: $BUCKET"
+          if [ -z "$BUCKET" ]; then
+            echo "ERROR: Could not retrieve artifacts bucket"
+            exit 1
+          fi
+
+          echo "Using artifacts bucket: $BUCKET"
           echo "LAMBDA_BUCKET=$BUCKET" >> $GITHUB_ENV
 
-      # ------------------------------------------------------------
-      # Upload ZIP to S3
-      # ------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 9. Upload Lambda ZIP to S3 (bucket created by infra)
+      # -----------------------------------------------------------------------
       - name: Upload Lambda ZIP to S3
         run: |
+          ZIP_KEY=deployment-${{ github.sha }}.zip
+          echo "Uploading $ZIP_KEY to s3://$LAMBDA_BUCKET"
           aws s3 cp \
             deployment-${{ github.sha }}.zip \
-            s3://${{ env.LAMBDA_BUCKET }}/deployment-${{ github.sha }}.zip
+            s3://$LAMBDA_BUCKET/$ZIP_KEY
 
-      # ------------------------------------------------------------
-      # Deploy application (update Lambdas)
-      # ------------------------------------------------------------
-      - name: Deploy application
+      # -----------------------------------------------------------------------
+      # 10. Deploy APPLICATION stack (Lambdas)
+      # -----------------------------------------------------------------------
+      - name: Deploy application stack
         run: |
+          echo "Deploying application stack..."
           aws cloudformation deploy \
-            --template-file cloudformation/template.yml \
-            --stack-name ${{ env.STACK_NAME }} \
+            --template-file cloudformation/app.yml \
+            --stack-name client-requests-app \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
-              Environment=${{ env.ENVIRONMENT }} \
-              LambdaS3Bucket=${{ env.LAMBDA_BUCKET }} \
-              LambdaS3Key=deployment-${{ github.sha }}.zip \
-              AllowedOrigins="*"
+              LambdaS3Bucket=$LAMBDA_BUCKET \
+              LambdaS3Key=deployment-${{ github.sha }}.zip
 
-      # ------------------------------------------------------------
-      # Outputs
-      # ------------------------------------------------------------
-      - name: Show outputs
+      # -----------------------------------------------------------------------
+      # 11. Show outputs
+      # -----------------------------------------------------------------------
+      - name: Show deployment outputs
         run: |
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" \
+          echo "Fetching outputs..."
+
+          TABLE=$(aws cloudformation describe-stacks \
+            --stack-name client-requests-infra \
+            --query "Stacks[0].Outputs[?OutputKey=='DynamoTable'].OutputValue" \
             --output text)
 
-          echo "API URL: $API_URL"
+          echo "----------------------------------------"
+          echo "DEPLOYMENT SUCCESSFUL"
+          echo "----------------------------------------"
+          echo "Artifacts bucket: $LAMBDA_BUCKET"
+          echo "DynamoDB table:   $TABLE"
+          echo "----------------------------------------"

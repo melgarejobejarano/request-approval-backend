@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Infrastructure for Client Request & Approval System
+
+Resources:
+  LambdaArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: client-requests-artifacts-eu-central-1
+      VersioningConfiguration:
+        Status: Enabled
+
+  ClientRequestsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ClientRequests
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+Outputs:
+  ArtifactsBucket:
+    Value: !Ref LambdaArtifactsBucket
+  DynamoTable:
+    Value: !Ref ClientRequestsTable
