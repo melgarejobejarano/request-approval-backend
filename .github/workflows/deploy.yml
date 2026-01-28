@@ -1,176 +1,221 @@
-name: Deploy to AWS
+# =============================================================================
+# Client Request & Approval System - CloudFormation Deployment
+# =============================================================================
+#
+# This workflow:
+# - Builds the backend
+# - Packages Lambda code into a ZIP
+# - Uploads the ZIP to S3
+# - Deploys infrastructure using AWS CloudFormation
+#
+# This setup is:
+# - Reproducible
+# - Auditable
+# - Enterprise-ready
+# - Aligned with CI/CD best practices
+#
+# =============================================================================
 
+name: Deploy Backend via CloudFormation
+
+# -----------------------------------------------------------------------------
+# Trigger: Push to main branch
+# -----------------------------------------------------------------------------
 on:
   push:
     branches:
       - main
-      - develop
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy to'
-        required: true
-        default: 'development'
-        type: choice
-        options:
-          - development
-          - staging
-          - production
 
+# -----------------------------------------------------------------------------
+# Global Environment Variables
+# -----------------------------------------------------------------------------
 env:
   AWS_REGION: eu-central-1
-  STACK_NAME_PREFIX: client-requests
+  ENVIRONMENT: production
+  STACK_NAME: client-requests-production
 
+# -----------------------------------------------------------------------------
+# Prevent concurrent deployments
+# -----------------------------------------------------------------------------
+concurrency:
+  group: cloudformation-deploy
+  cancel-in-progress: false
+
+# -----------------------------------------------------------------------------
+# Jobs
+# -----------------------------------------------------------------------------
 jobs:
-  build:
-    name: Build Lambda Package
+  deploy:
+    name: Build and Deploy Backend
     runs-on: ubuntu-latest
-    outputs:
-      artifact-name: ${{ steps.upload.outputs.artifact-name }}
+
     steps:
-      - name: Checkout code
+      # =========================================================================
+      # STEP 1: Checkout repository
+      # =========================================================================
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # =========================================================================
+      # STEP 2: Setup Node.js
+      # =========================================================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
 
+      # =========================================================================
+      # STEP 3: Install dependencies
+      # =========================================================================
       - name: Install dependencies
         run: npm ci
 
-      - name: Build TypeScript
+      # =========================================================================
+      # STEP 4: Build backend
+      # =========================================================================
+      - name: Build backend
         run: npm run build
 
+      # =========================================================================
+      # STEP 5: Create Lambda deployment package
+      # =========================================================================
       - name: Create deployment package
         run: |
-          mkdir -p deployment
-          cp -r dist/* deployment/
-          cp -r node_modules deployment/
-          cd deployment
-          zip -r ../deployment.zip .
+          echo "Creating Lambda deployment package..."
 
-      - name: Upload artifact
-        id: upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: lambda-deployment-${{ github.sha }}
-          path: deployment.zip
-          retention-days: 1
+          mkdir -p package
 
-  deploy:
-    name: Deploy Infrastructure
-    needs: build
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'development') }}
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+          # Copy compiled code
+          cp -r dist/* package/
 
-      - name: Set environment
-        id: env
-        run: |
-          if [ "${{ github.event.inputs.environment }}" != "" ]; then
-            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            echo "environment=production" >> $GITHUB_OUTPUT
-          else
-            echo "environment=development" >> $GITHUB_OUTPUT
-          fi
+          # Copy dependencies
+          cp -r node_modules package/
 
+          # Create ZIP file
+          cd package
+          zip -qr ../deployment-${{ github.sha }}.zip .
+          cd ..
+
+          # Cleanup
+          rm -rf package
+
+          echo "Deployment package created:"
+          ls -lh deployment-${{ github.sha }}.zip
+
+      # =========================================================================
+      # STEP 6: Configure AWS credentials
+      # =========================================================================
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: lambda-deployment-${{ github.sha }}
-
-      - name: Upload to S3
+      # =========================================================================
+      # STEP 7: Upload deployment package to S3
+      # =========================================================================
+      - name: Upload deployment package to S3
         run: |
-          BUCKET_NAME="${{ env.STACK_NAME_PREFIX }}-deployments-${{ steps.env.outputs.environment }}"
-          
-          # Create bucket if it doesn't exist
-          aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null || \
-            aws s3 mb "s3://$BUCKET_NAME" --region ${{ env.AWS_REGION }}
-          
-          # Upload deployment package
-          aws s3 cp deployment.zip "s3://$BUCKET_NAME/deployment-${{ github.sha }}.zip"
-          
-          echo "S3_BUCKET=$BUCKET_NAME" >> $GITHUB_ENV
-          echo "S3_KEY=deployment-${{ github.sha }}.zip" >> $GITHUB_ENV
+          S3_KEY="deployment-${{ github.sha }}.zip"
 
+          echo "Uploading Lambda package to S3..."
+          echo "Bucket: ${{ secrets.LAMBDA_S3_BUCKET }}"
+          echo "Key:    ${S3_KEY}"
+
+          aws s3 cp \
+            deployment-${{ github.sha }}.zip \
+            s3://${{ secrets.LAMBDA_S3_BUCKET }}/${S3_KEY}
+
+          echo "Upload completed"
+
+      # =========================================================================
+      # STEP 8: Validate CloudFormation template
+      # =========================================================================
       - name: Validate CloudFormation template
         run: |
+          echo "Validating CloudFormation template..."
           aws cloudformation validate-template \
             --template-body file://cloudformation/template.yml
+          echo "Template is valid"
 
+      # =========================================================================
+      # STEP 9: Deploy CloudFormation stack
+      # =========================================================================
       - name: Deploy CloudFormation stack
         run: |
-          STACK_NAME="${{ env.STACK_NAME_PREFIX }}-${{ steps.env.outputs.environment }}"
-          
+          S3_KEY="deployment-${{ github.sha }}.zip"
+
+          echo "========================================"
+          echo "Deploying CloudFormation stack"
+          echo "========================================"
+          echo "Stack Name:  ${{ env.STACK_NAME }}"
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+          echo "S3 Bucket:   ${{ secrets.LAMBDA_S3_BUCKET }}"
+          echo "S3 Key:      ${S3_KEY}"
+          echo "========================================"
+
           aws cloudformation deploy \
             --template-file cloudformation/template.yml \
-            --stack-name "$STACK_NAME" \
+            --stack-name ${{ env.STACK_NAME }} \
             --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
             --parameter-overrides \
-              Environment=${{ steps.env.outputs.environment }} \
-              LambdaS3Bucket=${{ env.S3_BUCKET }} \
-              LambdaS3Key=${{ env.S3_KEY }} \
-              JiraBaseUrl="${{ secrets.JIRA_BASE_URL }}" \
-              JiraUsername="${{ secrets.JIRA_USERNAME }}" \
-              JiraApiToken="${{ secrets.JIRA_API_TOKEN }}" \
-              JiraProjectKey="${{ secrets.JIRA_PROJECT_KEY || 'REQ' }}" \
-              AllowedOrigins="${{ vars.ALLOWED_ORIGINS || '*' }}" \
+              Environment="${{ env.ENVIRONMENT }}" \
+              LambdaS3Bucket="${{ secrets.LAMBDA_S3_BUCKET }}" \
+              LambdaS3Key="${S3_KEY}" \
+              AllowedOrigins="*" \
             --tags \
-              Environment=${{ steps.env.outputs.environment }} \
-              Application=ClientRequestApprovalSystem \
-              ManagedBy=GitHubActions \
-            --no-fail-on-empty-changeset
+              Environment="${{ env.ENVIRONMENT }}" \
+              Application="ClientRequestApprovalSystem" \
+              ManagedBy="GitHubActions" \
+              CommitSHA="${{ github.sha }}"
 
-      - name: Get stack outputs
-        id: outputs
+          echo "CloudFormation deployment completed"
+
+      # =========================================================================
+      # STEP 10: Display stack outputs
+      # =========================================================================
+      - name: Get deployment outputs
         run: |
-          STACK_NAME="${{ env.STACK_NAME_PREFIX }}-${{ steps.env.outputs.environment }}"
-          
+          echo "Retrieving stack outputs..."
+
           API_URL=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
+            --stack-name ${{ env.STACK_NAME }} \
             --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" \
             --output text)
-          
-          echo "api-url=$API_URL" >> $GITHUB_OUTPUT
-          echo "## Deployment Successful! :rocket:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** ${{ steps.env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "**API URL:** $API_URL" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Available Endpoints" >> $GITHUB_STEP_SUMMARY
-          echo "| Method | Endpoint | Role |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|----------|------|" >> $GITHUB_STEP_SUMMARY
-          echo "| POST | \`/requests\` | CLIENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| GET | \`/requests\` | ALL |" >> $GITHUB_STEP_SUMMARY
-          echo "| GET | \`/requests/{id}\` | ALL |" >> $GITHUB_STEP_SUMMARY
-          echo "| PATCH | \`/requests/{id}/estimate\` | INTERNAL |" >> $GITHUB_STEP_SUMMARY
-          echo "| PATCH | \`/requests/{id}/approve\` | APPROVER |" >> $GITHUB_STEP_SUMMARY
 
-    outputs:
-      api-url: ${{ steps.outputs.outputs.api-url }}
-      environment: ${{ steps.env.outputs.environment }}
+          TABLE_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='DynamoDBTableName'].OutputValue" \
+            --output text)
 
-  notify:
-    name: Notify
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Deployment summary
-        run: |
-          echo "Deployment to ${{ needs.deploy.outputs.environment }} completed"
-          echo "API URL: ${{ needs.deploy.outputs.api-url }}"
+          echo ""
+          echo "========================================"
+          echo "DEPLOYMENT SUCCESSFUL"
+          echo "========================================"
+          echo "API URL:        ${API_URL}"
+          echo "DynamoDB Table: ${TABLE_NAME}"
+          echo "========================================"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Backend Deployment Complete
+
+          | Output | Value |
+          |-------|-------|
+          | **API URL** | \`${API_URL}\` |
+          | **DynamoDB Table** | \`${TABLE_NAME}\` |
+          | **Stack Name** | \`${{ env.STACK_NAME }}\` |
+          | **Commit** | \`${{ github.sha }}\` |
+
+          ### Available API Endpoints
+
+          | Method | Path | Description |
+          |-------|------|-------------|
+          | POST | /requests | Create client request |
+          | GET | /requests | List requests |
+          | GET | /requests/{id} | Get request by ID |
+          | PATCH | /requests/{id}/estimate | Estimate request |
+          | PATCH | /requests/{id}/approve | Approve request |
+          EOF
