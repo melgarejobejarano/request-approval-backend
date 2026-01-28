@@ -13,11 +13,11 @@ Parameters:
 Resources:
   # ---------------------------------------------------------------------------
   # IAM Role for Lambda execution
+  # (NO fixed RoleName to avoid conflicts)
   # ---------------------------------------------------------------------------
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: client-requests-lambda-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -35,7 +35,6 @@ Resources:
   CreateRequestFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: CreateRequest
       Runtime: nodejs18.x
       Handler: CreateRequest.handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -50,7 +49,6 @@ Resources:
   GetRequestsFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: GetRequests
       Runtime: nodejs18.x
       Handler: GetRequests.handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -65,7 +63,6 @@ Resources:
   ApproveRequestFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: ApproveRequest
       Runtime: nodejs18.x
       Handler: ApproveRequest.handler
       Role: !GetAtt LambdaExecutionRole.Arn
