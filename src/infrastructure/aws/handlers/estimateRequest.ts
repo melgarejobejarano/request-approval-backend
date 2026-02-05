@@ -1,8 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { EstimateRequestUseCase } from '../../../application/use-cases/EstimateRequest';
 import { DynamoDBRequestRepository } from '../../persistence/DynamoDBRequestRepository';
-import { UserRole } from '../../../domain/value-objects/UserRole';
-import { ValidationError, UnauthorizedError } from '../../../shared/errors';
+import { ValidationError } from '../../../shared/errors';
 import { withHandler, createSuccessResponse, parseBody, getPathParameter } from './utils';
 
 interface EstimateRequestBody {
@@ -16,7 +15,7 @@ interface EstimateRequestBody {
  * 
  * Required headers:
  * - X-User-Id: User's ID
- * - X-User-Role: Must be INTERNAL
+ * - X-User-Role: Any valid role (MVP: role gating disabled)
  * - X-User-Name: User's display name
  * 
  * Path parameters:
@@ -32,10 +31,8 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   return withHandler(event, async (evt, userContext) => {
     const origin = evt.headers['origin'] || evt.headers['Origin'];
 
-    // Only INTERNAL role can estimate requests
-    if (userContext.userRole !== UserRole.INTERNAL) {
-      throw new UnauthorizedError('Only INTERNAL users can estimate requests');
-    }
+    // MVP: Role gating disabled - any authenticated user can estimate
+    // TODO: Re-enable for production: Only INTERNAL role can estimate requests
 
     // Get request ID from path
     const requestId = getPathParameter(evt, 'id');
