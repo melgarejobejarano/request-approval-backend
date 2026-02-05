@@ -6,8 +6,20 @@ export enum RequestStatus {
   NEW = 'NEW',
   PENDING_APPROVAL = 'PENDING_APPROVAL',
   APPROVED = 'APPROVED',
-  REJECTED = 'REJECTED'
+  REJECTED = 'REJECTED',
+  CANCELED = 'CANCELED'
 }
+
+/**
+ * Active statuses (excludes CANCELED)
+ * Used by API and UI to filter out canceled requests
+ */
+export const ACTIVE_STATUSES: RequestStatus[] = [
+  RequestStatus.NEW,
+  RequestStatus.PENDING_APPROVAL,
+  RequestStatus.APPROVED,
+  RequestStatus.REJECTED
+];
 
 /**
  * Legacy status mapping for backward compatibility
@@ -28,10 +40,11 @@ export function normalizeStatus(status: string): RequestStatus {
 }
 
 export const REQUEST_STATUS_TRANSITIONS: Record<RequestStatus, RequestStatus[]> = {
-  [RequestStatus.NEW]: [RequestStatus.PENDING_APPROVAL],
-  [RequestStatus.PENDING_APPROVAL]: [RequestStatus.APPROVED, RequestStatus.REJECTED],
+  [RequestStatus.NEW]: [RequestStatus.PENDING_APPROVAL, RequestStatus.CANCELED],
+  [RequestStatus.PENDING_APPROVAL]: [RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CANCELED],
   [RequestStatus.APPROVED]: [],
-  [RequestStatus.REJECTED]: []
+  [RequestStatus.REJECTED]: [],
+  [RequestStatus.CANCELED]: []
 };
 
 export function isValidStatusTransition(from: RequestStatus, to: RequestStatus): boolean {
@@ -39,5 +52,12 @@ export function isValidStatusTransition(from: RequestStatus, to: RequestStatus):
 }
 
 export function isTerminalStatus(status: RequestStatus): boolean {
-  return status === RequestStatus.APPROVED || status === RequestStatus.REJECTED;
+  return status === RequestStatus.APPROVED || status === RequestStatus.REJECTED || status === RequestStatus.CANCELED;
+}
+
+/**
+ * Check if a status is canceled
+ */
+export function isCanceledStatus(status: RequestStatus): boolean {
+  return status === RequestStatus.CANCELED;
 }

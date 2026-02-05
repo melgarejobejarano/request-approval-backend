@@ -11,7 +11,7 @@ import {
 import { Request, RequestProps } from '../../domain/entities/Request';
 import { IRequestRepository } from '../../application/interfaces/IRequestRepository';
 import { getConfig } from '../../shared/config';
-import { normalizeStatus } from '../../domain/value-objects/RequestStatus';
+import { normalizeStatus, RequestStatus } from '../../domain/value-objects/RequestStatus';
 
 /**
  * DynamoDB Request Repository
@@ -68,6 +68,9 @@ export class DynamoDBRequestRepository implements IRequestRepository {
       'approvedBy',
       'approvalComment',
       'approvedAt',
+      'canceledBy',
+      'canceledAt',
+      'cancelReason',
       'jiraIssueKey',
       'jiraIssueUrl',
       'updatedAt'
@@ -115,7 +118,7 @@ export class DynamoDBRequestRepository implements IRequestRepository {
     return Request.fromPersistence(this.normalizeItem(result.Item as Record<string, unknown>));
   }
 
-  async findAll(): Promise<Request[]> {
+  async findAll(includeCanceled: boolean = false): Promise<Request[]> {
     const result = await this.docClient.send(
       new ScanCommand({
         TableName: this.tableName
@@ -126,10 +129,17 @@ export class DynamoDBRequestRepository implements IRequestRepository {
       return [];
     }
 
-    return result.Items.map(item => Request.fromPersistence(this.normalizeItem(item as Record<string, unknown>)));
+    let requests = result.Items.map(item => Request.fromPersistence(this.normalizeItem(item as Record<string, unknown>)));
+    
+    // Filter out canceled requests unless explicitly requested
+    if (!includeCanceled) {
+      requests = requests.filter(r => r.status !== RequestStatus.CANCELED);
+    }
+    
+    return requests;
   }
 
-  async findByClientId(clientId: string): Promise<Request[]> {
+  async findByClientId(clientId: string, includeCanceled: boolean = false): Promise<Request[]> {
     const result = await this.docClient.send(
       new QueryCommand({
         TableName: this.tableName,
@@ -145,7 +155,14 @@ export class DynamoDBRequestRepository implements IRequestRepository {
       return [];
     }
 
-    return result.Items.map(item => Request.fromPersistence(this.normalizeItem(item as Record<string, unknown>)));
+    let requests = result.Items.map(item => Request.fromPersistence(this.normalizeItem(item as Record<string, unknown>)));
+    
+    // Filter out canceled requests unless explicitly requested
+    if (!includeCanceled) {
+      requests = requests.filter(r => r.status !== RequestStatus.CANCELED);
+    }
+    
+    return requests;
   }
 
   async delete(id: string): Promise<void> {

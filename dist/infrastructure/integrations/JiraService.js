@@ -171,6 +171,54 @@ class JiraService {
             status: result.fields.status.name
         };
     }
+    /**
+     * Get current labels on an issue
+     */
+    async getIssueLabels(issueKey) {
+        if (!(0, config_1.isJiraConfigured)()) {
+            return [];
+        }
+        try {
+            const result = await this.makeRequest(`/issue/${issueKey}?fields=labels`, 'GET');
+            return result?.fields?.labels || [];
+        }
+        catch {
+            console.warn(`[JIRA] Could not get labels for ${issueKey}`);
+            return [];
+        }
+    }
+    /**
+     * Add a label to an issue without overwriting existing labels
+     * This is best-effort: failures are logged but not thrown
+     */
+    async addLabel(issueKey, label) {
+        if (!(0, config_1.isJiraConfigured)()) {
+            console.log(`[MOCK JIRA] Would add label "${label}" to ${issueKey}`);
+            return true;
+        }
+        try {
+            // Get current labels
+            const currentLabels = await this.getIssueLabels(issueKey);
+            // Check if label already exists
+            if (currentLabels.includes(label)) {
+                console.log(`[JIRA] Label "${label}" already exists on ${issueKey}`);
+                return true;
+            }
+            // Add the new label
+            const newLabels = [...currentLabels, label];
+            await this.makeRequest(`/issue/${issueKey}`, 'PUT', {
+                fields: {
+                    labels: newLabels
+                }
+            });
+            console.log(`[JIRA] Added label "${label}" to ${issueKey}`);
+            return true;
+        }
+        catch (error) {
+            console.warn(`[JIRA] Failed to add label "${label}" to ${issueKey}:`, error);
+            return false;
+        }
+    }
 }
 exports.JiraService = JiraService;
 //# sourceMappingURL=JiraService.js.map

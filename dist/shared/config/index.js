@@ -31,7 +31,8 @@ function loadConfig() {
             baseUrl: getEnvVarOptional('JIRA_BASE_URL'),
             username: getEnvVarOptional('JIRA_USERNAME'),
             apiToken: getEnvVarOptional('JIRA_API_TOKEN'),
-            projectKey: getEnvVarOptional('JIRA_PROJECT_KEY', 'REQ')
+            projectKey: getEnvVarOptional('JIRA_PROJECT_KEY', 'REQ'),
+            canceledLabel: getEnvVarOptional('JIRA_CANCELED_LABEL', 'requestflow-canceled')
         },
         app: {
             environment: getEnvVarOptional('NODE_ENV', 'development'),

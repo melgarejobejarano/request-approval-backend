@@ -18,12 +18,14 @@ export interface IRequestRepository {
     findById(id: string): Promise<Request | null>;
     /**
      * Find all requests
+     * @param includeCanceled - If true, includes canceled requests (default: false)
      */
-    findAll(): Promise<Request[]>;
+    findAll(includeCanceled?: boolean): Promise<Request[]>;
     /**
      * Find requests by client ID
+     * @param includeCanceled - If true, includes canceled requests (default: false)
      */
-    findByClientId(clientId: string): Promise<Request[]>;
+    findByClientId(clientId: string, includeCanceled?: boolean): Promise<Request[]>;
     /**
      * Delete a request by ID
      */

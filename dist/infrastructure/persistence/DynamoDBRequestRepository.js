@@ -52,6 +52,9 @@ class DynamoDBRequestRepository {
             'approvedBy',
             'approvalComment',
             'approvedAt',
+            'canceledBy',
+            'canceledAt',
+            'cancelReason',
             'jiraIssueKey',
             'jiraIssueUrl',
             'updatedAt'
@@ -88,16 +91,21 @@ class DynamoDBRequestRepository {
         }
         return Request_1.Request.fromPersistence(this.normalizeItem(result.Item));
     }
-    async findAll() {
+    async findAll(includeCanceled = false) {
         const result = await this.docClient.send(new lib_dynamodb_1.ScanCommand({
             TableName: this.tableName
         }));
         if (!result.Items) {
             return [];
         }
-        return result.Items.map(item => Request_1.Request.fromPersistence(this.normalizeItem(item)));
+        let requests = result.Items.map(item => Request_1.Request.fromPersistence(this.normalizeItem(item)));
+        // Filter out canceled requests unless explicitly requested
+        if (!includeCanceled) {
+            requests = requests.filter(r => r.status !== RequestStatus_1.RequestStatus.CANCELED);
+        }
+        return requests;
     }
-    async findByClientId(clientId) {
+    async findByClientId(clientId, includeCanceled = false) {
         const result = await this.docClient.send(new lib_dynamodb_1.QueryCommand({
             TableName: this.tableName,
             IndexName: 'clientId-index',
@@ -109,7 +117,12 @@ class DynamoDBRequestRepository {
         if (!result.Items) {
             return [];
         }
-        return result.Items.map(item => Request_1.Request.fromPersistence(this.normalizeItem(item)));
+        let requests = result.Items.map(item => Request_1.Request.fromPersistence(this.normalizeItem(item)));
+        // Filter out canceled requests unless explicitly requested
+        if (!includeCanceled) {
+            requests = requests.filter(r => r.status !== RequestStatus_1.RequestStatus.CANCELED);
+        }
+        return requests;
     }
     async delete(id) {
         await this.docClient.send(new lib_dynamodb_1.DeleteCommand({

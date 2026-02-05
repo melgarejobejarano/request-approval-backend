@@ -16,8 +16,8 @@ export declare class DynamoDBRequestRepository implements IRequestRepository {
     save(request: Request): Promise<void>;
     update(request: Request): Promise<void>;
     findById(id: string): Promise<Request | null>;
-    findAll(): Promise<Request[]>;
-    findByClientId(clientId: string): Promise<Request[]>;
+    findAll(includeCanceled?: boolean): Promise<Request[]>;
+    findByClientId(clientId: string, includeCanceled?: boolean): Promise<Request[]>;
     delete(id: string): Promise<void>;
 }
 //# sourceMappingURL=DynamoDBRequestRepository.d.ts.map

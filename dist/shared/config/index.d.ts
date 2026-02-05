@@ -12,6 +12,7 @@ export interface Config {
         username: string;
         apiToken: string;
         projectKey: string;
+        canceledLabel: string;
     };
     app: {
         environment: string;

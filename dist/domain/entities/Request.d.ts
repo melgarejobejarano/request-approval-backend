@@ -17,6 +17,9 @@ export interface RequestProps {
     approvedBy?: string;
     approvalComment?: string;
     approvedAt?: string;
+    canceledBy?: string;
+    canceledAt?: string;
+    cancelReason?: string;
     jiraIssueKey?: string;
     jiraIssueUrl?: string;
     createdAt?: string;
@@ -36,6 +39,9 @@ export declare class Request {
     approvedBy?: string;
     approvalComment?: string;
     approvedAt?: string;
+    canceledBy?: string;
+    canceledAt?: string;
+    cancelReason?: string;
     jiraIssueKey?: string;
     jiraIssueUrl?: string;
     readonly createdAt: string;
@@ -62,6 +68,16 @@ export declare class Request {
      * Reject the request
      */
     reject(rejectedBy: string, comment: string): void;
+    /**
+     * Cancel the request
+     * Can be called from NEW or PENDING_APPROVAL status
+     * If already canceled, this is a no-op (idempotent)
+     */
+    cancel(canceledBy: string, reason?: string): void;
+    /**
+     * Check if the request is canceled
+     */
+    isCanceled(): boolean;
     /**
      * Set JIRA issue information
      */

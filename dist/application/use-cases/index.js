@@ -19,4 +19,5 @@ __exportStar(require("./GetRequests"), exports);
 __exportStar(require("./GetRequestById"), exports);
 __exportStar(require("./EstimateRequest"), exports);
 __exportStar(require("./ApproveRequest"), exports);
+__exportStar(require("./CancelRequest"), exports);
 //# sourceMappingURL=index.js.map

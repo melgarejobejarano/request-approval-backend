@@ -43,5 +43,12 @@ export interface IJiraService {
      * @param issueKey The JIRA issue key
      */
     getIssue(issueKey: string): Promise<JiraIssueResponse | null>;
+    /**
+     * Add a label to an issue (best-effort, does not throw)
+     * @param issueKey The JIRA issue key
+     * @param label The label to add
+     * @returns true if successful, false otherwise
+     */
+    addLabel(issueKey: string, label: string): Promise<boolean>;
 }
 //# sourceMappingURL=IJiraService.d.ts.map

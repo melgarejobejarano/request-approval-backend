@@ -19,6 +19,9 @@ export interface RequestProps {
   approvedBy?: string;
   approvalComment?: string;
   approvedAt?: string;
+  canceledBy?: string;
+  canceledAt?: string;
+  cancelReason?: string;
   jiraIssueKey?: string;
   jiraIssueUrl?: string;
   createdAt?: string;
@@ -39,6 +42,9 @@ export class Request {
   public approvedBy?: string;
   public approvalComment?: string;
   public approvedAt?: string;
+  public canceledBy?: string;
+  public canceledAt?: string;
+  public cancelReason?: string;
   public jiraIssueKey?: string;
   public jiraIssueUrl?: string;
   public readonly createdAt: string;
@@ -58,6 +64,9 @@ export class Request {
     this.approvedBy = props.approvedBy;
     this.approvalComment = props.approvalComment;
     this.approvedAt = props.approvedAt;
+    this.canceledBy = props.canceledBy;
+    this.canceledAt = props.canceledAt;
+    this.cancelReason = props.cancelReason;
     this.jiraIssueKey = props.jiraIssueKey;
     this.jiraIssueUrl = props.jiraIssueUrl;
     this.createdAt = props.createdAt || new Date().toISOString();
@@ -145,6 +154,36 @@ export class Request {
   }
 
   /**
+   * Cancel the request
+   * Can be called from NEW or PENDING_APPROVAL status
+   * If already canceled, this is a no-op (idempotent)
+   */
+  public cancel(canceledBy: string, reason?: string): void {
+    // Idempotent: if already canceled, just return success
+    if (this.status === RequestStatus.CANCELED) {
+      return;
+    }
+
+    // Cannot cancel terminal states (APPROVED, REJECTED)
+    if (this.status === RequestStatus.APPROVED || this.status === RequestStatus.REJECTED) {
+      throw new Error(`Cannot cancel request in ${this.status} status. Request is already in a terminal state.`);
+    }
+
+    this.canceledBy = canceledBy;
+    this.canceledAt = new Date().toISOString();
+    this.cancelReason = reason;
+    this.status = RequestStatus.CANCELED;
+    this.updatedAt = new Date().toISOString();
+  }
+
+  /**
+   * Check if the request is canceled
+   */
+  public isCanceled(): boolean {
+    return this.status === RequestStatus.CANCELED;
+  }
+
+  /**
    * Set JIRA issue information
    */
   public setJiraIssue(issueKey: string, issueUrl: string): void {
@@ -185,6 +224,9 @@ export class Request {
       approvedBy: this.approvedBy,
       approvalComment: this.approvalComment,
       approvedAt: this.approvedAt,
+      canceledBy: this.canceledBy,
+      canceledAt: this.canceledAt,
+      cancelReason: this.cancelReason,
       jiraIssueKey: this.jiraIssueKey,
       jiraIssueUrl: this.jiraIssueUrl,
       createdAt: this.createdAt,
