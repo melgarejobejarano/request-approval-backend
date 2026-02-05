@@ -1,6 +1,6 @@
 import { IRequestRepository } from '../interfaces/IRequestRepository';
-import { UserRole, hasPermission, Permission } from '../../domain/value-objects/UserRole';
-import { NotFoundError, UnauthorizedError, ValidationError } from '../../shared/errors';
+import { UserRole } from '../../domain/value-objects/UserRole';
+import { NotFoundError, ValidationError } from '../../shared/errors';
 
 export interface EstimateRequestInput {
   requestId: string;
@@ -17,18 +17,22 @@ export interface EstimateRequestOutput {
 
 /**
  * Estimate Request Use Case
- * Allows INTERNAL users to add effort estimation to requests
+ * Allows authenticated users to add effort estimation to requests
+ * 
+ * MVP: Role gating disabled - any authenticated user can estimate
+ * TODO: Re-enable for production with Cognito: Only INTERNAL users can estimate
  */
 export class EstimateRequestUseCase {
   constructor(private readonly requestRepository: IRequestRepository) {}
 
   async execute(input: EstimateRequestInput): Promise<EstimateRequestOutput> {
-    const { requestId, estimatedDays, comment, userId, userName, userRole } = input;
+    const { requestId, estimatedDays, comment, userName } = input;
 
-    // Check permission
-    if (!hasPermission(userRole, Permission.ESTIMATE_REQUEST)) {
-      throw new UnauthorizedError('Only INTERNAL users can estimate requests');
-    }
+    // MVP: Role gating disabled - any authenticated user can estimate
+    // TODO: Re-enable for production:
+    // if (!hasPermission(userRole, Permission.ESTIMATE_REQUEST)) {
+    //   throw new UnauthorizedError('Only INTERNAL users can estimate requests');
+    // }
 
     // Validate input
     if (!estimatedDays || estimatedDays <= 0) {
