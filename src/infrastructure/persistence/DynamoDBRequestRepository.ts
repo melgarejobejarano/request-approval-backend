@@ -11,6 +11,7 @@ import {
 import { Request, RequestProps } from '../../domain/entities/Request';
 import { IRequestRepository } from '../../application/interfaces/IRequestRepository';
 import { getConfig } from '../../shared/config';
+import { normalizeStatus } from '../../domain/value-objects/RequestStatus';
 
 /**
  * DynamoDB Request Repository
@@ -25,6 +26,17 @@ export class DynamoDBRequestRepository implements IRequestRepository {
     const client = new DynamoDBClient({ region: config.aws.region });
     this.docClient = DynamoDBDocumentClient.from(client);
     this.tableName = config.aws.dynamoDBTableName;
+  }
+
+  /**
+   * Normalize item from DynamoDB, handling legacy status values
+   * Converts ESTIMATED -> PENDING_APPROVAL for backward compatibility
+   */
+  private normalizeItem(item: Record<string, unknown>): RequestProps {
+    if (item.status && typeof item.status === 'string') {
+      item.status = normalizeStatus(item.status);
+    }
+    return item as unknown as RequestProps;
   }
 
   async save(request: Request): Promise<void> {
@@ -100,7 +112,7 @@ export class DynamoDBRequestRepository implements IRequestRepository {
       return null;
     }
 
-    return Request.fromPersistence(result.Item as RequestProps);
+    return Request.fromPersistence(this.normalizeItem(result.Item as Record<string, unknown>));
   }
 
   async findAll(): Promise<Request[]> {
@@ -114,7 +126,7 @@ export class DynamoDBRequestRepository implements IRequestRepository {
       return [];
     }
 
-    return result.Items.map(item => Request.fromPersistence(item as RequestProps));
+    return result.Items.map(item => Request.fromPersistence(this.normalizeItem(item as Record<string, unknown>)));
   }
 
   async findByClientId(clientId: string): Promise<Request[]> {
@@ -133,7 +145,7 @@ export class DynamoDBRequestRepository implements IRequestRepository {
       return [];
     }
 
-    return result.Items.map(item => Request.fromPersistence(item as RequestProps));
+    return result.Items.map(item => Request.fromPersistence(this.normalizeItem(item as Record<string, unknown>)));
   }
 
   async delete(id: string): Promise<void> {

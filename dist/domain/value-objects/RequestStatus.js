@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.REQUEST_STATUS_TRANSITIONS = exports.RequestStatus = void 0;
+exports.REQUEST_STATUS_TRANSITIONS = exports.LEGACY_STATUS_MAP = exports.RequestStatus = void 0;
+exports.normalizeStatus = normalizeStatus;
 exports.isValidStatusTransition = isValidStatusTransition;
 exports.isTerminalStatus = isTerminalStatus;
 /**
@@ -10,13 +11,29 @@ exports.isTerminalStatus = isTerminalStatus;
 var RequestStatus;
 (function (RequestStatus) {
     RequestStatus["NEW"] = "NEW";
-    RequestStatus["ESTIMATED"] = "ESTIMATED";
+    RequestStatus["PENDING_APPROVAL"] = "PENDING_APPROVAL";
     RequestStatus["APPROVED"] = "APPROVED";
     RequestStatus["REJECTED"] = "REJECTED";
 })(RequestStatus || (exports.RequestStatus = RequestStatus = {}));
+/**
+ * Legacy status mapping for backward compatibility
+ * Existing records may have 'ESTIMATED' status which maps to PENDING_APPROVAL
+ */
+exports.LEGACY_STATUS_MAP = {
+    'ESTIMATED': RequestStatus.PENDING_APPROVAL
+};
+/**
+ * Normalize a status value, handling legacy statuses
+ */
+function normalizeStatus(status) {
+    if (exports.LEGACY_STATUS_MAP[status]) {
+        return exports.LEGACY_STATUS_MAP[status];
+    }
+    return status;
+}
 exports.REQUEST_STATUS_TRANSITIONS = {
-    [RequestStatus.NEW]: [RequestStatus.ESTIMATED],
-    [RequestStatus.ESTIMATED]: [RequestStatus.APPROVED, RequestStatus.REJECTED],
+    [RequestStatus.NEW]: [RequestStatus.PENDING_APPROVAL],
+    [RequestStatus.PENDING_APPROVAL]: [RequestStatus.APPROVED, RequestStatus.REJECTED],
     [RequestStatus.APPROVED]: [],
     [RequestStatus.REJECTED]: []
 };

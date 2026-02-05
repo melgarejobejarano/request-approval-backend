@@ -93,6 +93,7 @@ export class Request {
 
   /**
    * Add estimation to the request
+   * Sets status to PENDING_APPROVAL (ready for approver review)
    */
   public estimate(estimatedDays: number, comment: string, estimatedBy: string): void {
     if (this.status !== RequestStatus.NEW) {
@@ -106,7 +107,7 @@ export class Request {
     this.estimationComment = comment;
     this.estimatedBy = estimatedBy;
     this.estimatedAt = new Date().toISOString();
-    this.status = RequestStatus.ESTIMATED;
+    this.status = RequestStatus.PENDING_APPROVAL;
     this.updatedAt = new Date().toISOString();
   }
 
@@ -114,7 +115,7 @@ export class Request {
    * Approve the request
    */
   public approve(approvedBy: string, comment?: string): void {
-    if (this.status !== RequestStatus.ESTIMATED) {
+    if (this.status !== RequestStatus.PENDING_APPROVAL) {
       throw new Error(`Cannot approve request in ${this.status} status. Request must be estimated first.`);
     }
 
@@ -129,7 +130,7 @@ export class Request {
    * Reject the request
    */
   public reject(rejectedBy: string, comment: string): void {
-    if (this.status !== RequestStatus.ESTIMATED) {
+    if (this.status !== RequestStatus.PENDING_APPROVAL) {
       throw new Error(`Cannot reject request in ${this.status} status. Request must be estimated first.`);
     }
     if (!comment || comment.trim().length === 0) {

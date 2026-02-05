@@ -5,6 +5,7 @@ const client_dynamodb_1 = require("@aws-sdk/client-dynamodb");
 const lib_dynamodb_1 = require("@aws-sdk/lib-dynamodb");
 const Request_1 = require("../../domain/entities/Request");
 const config_1 = require("../../shared/config");
+const RequestStatus_1 = require("../../domain/value-objects/RequestStatus");
 /**
  * DynamoDB Request Repository
  * Implements the IRequestRepository interface for DynamoDB persistence
@@ -17,6 +18,16 @@ class DynamoDBRequestRepository {
         const client = new client_dynamodb_1.DynamoDBClient({ region: config.aws.region });
         this.docClient = lib_dynamodb_1.DynamoDBDocumentClient.from(client);
         this.tableName = config.aws.dynamoDBTableName;
+    }
+    /**
+     * Normalize item from DynamoDB, handling legacy status values
+     * Converts ESTIMATED -> PENDING_APPROVAL for backward compatibility
+     */
+    normalizeItem(item) {
+        if (item.status && typeof item.status === 'string') {
+            item.status = (0, RequestStatus_1.normalizeStatus)(item.status);
+        }
+        return item;
     }
     async save(request) {
         const item = request.toPersistence();
@@ -75,7 +86,7 @@ class DynamoDBRequestRepository {
         if (!result.Item) {
             return null;
         }
-        return Request_1.Request.fromPersistence(result.Item);
+        return Request_1.Request.fromPersistence(this.normalizeItem(result.Item));
     }
     async findAll() {
         const result = await this.docClient.send(new lib_dynamodb_1.ScanCommand({
@@ -84,7 +95,7 @@ class DynamoDBRequestRepository {
         if (!result.Items) {
             return [];
         }
-        return result.Items.map(item => Request_1.Request.fromPersistence(item));
+        return result.Items.map(item => Request_1.Request.fromPersistence(this.normalizeItem(item)));
     }
     async findByClientId(clientId) {
         const result = await this.docClient.send(new lib_dynamodb_1.QueryCommand({
@@ -98,7 +109,7 @@ class DynamoDBRequestRepository {
         if (!result.Items) {
             return [];
         }
-        return result.Items.map(item => Request_1.Request.fromPersistence(item));
+        return result.Items.map(item => Request_1.Request.fromPersistence(this.normalizeItem(item)));
     }
     async delete(id) {
         await this.docClient.send(new lib_dynamodb_1.DeleteCommand({

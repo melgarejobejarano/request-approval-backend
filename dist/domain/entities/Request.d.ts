@@ -51,6 +51,7 @@ export declare class Request {
     static fromPersistence(props: RequestProps): Request;
     /**
      * Add estimation to the request
+     * Sets status to PENDING_APPROVAL (ready for approver review)
      */
     estimate(estimatedDays: number, comment: string, estimatedBy: string): void;
     /**
