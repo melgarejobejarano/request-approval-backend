@@ -57,13 +57,19 @@ A production-ready backend API for managing client work requests with an approva
 ### Request Workflow
 
 ```
-NEW ──► ESTIMATED ──► APPROVED
-                 └──► REJECTED
+NEW ──► PENDING_APPROVAL ──► APPROVED
+             │           └──► REJECTED
+             └──► CANCELED
+
+(Any status) ──► CANCELED (except terminal states)
 ```
 
 1. **CLIENT** creates a request → Status: `NEW`
-2. **INTERNAL** user estimates effort → Status: `ESTIMATED`
+2. **INTERNAL** user estimates effort → Status: `PENDING_APPROVAL`
 3. **APPROVER** (Jules) approves or rejects → Status: `APPROVED` or `REJECTED`
+4. Users can cancel requests before approval → Status: `CANCELED`
+
+> **Note**: Legacy records with status `ESTIMATED` are automatically normalized to `PENDING_APPROVAL` on read.
 
 ### Core Capabilities
 
