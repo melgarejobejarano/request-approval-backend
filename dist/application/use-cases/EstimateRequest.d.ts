@@ -13,7 +13,10 @@ export interface EstimateRequestOutput {
 }
 /**
  * Estimate Request Use Case
- * Allows INTERNAL users to add effort estimation to requests
+ * Allows authenticated users to add effort estimation to requests
+ *
+ * MVP: Role gating disabled - any authenticated user can estimate
+ * TODO: Re-enable for production with Cognito: Only INTERNAL users can estimate
  */
 export declare class EstimateRequestUseCase {
     private readonly requestRepository;

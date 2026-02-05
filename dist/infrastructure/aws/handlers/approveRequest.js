@@ -4,7 +4,6 @@ exports.handler = void 0;
 const ApproveRequest_1 = require("../../../application/use-cases/ApproveRequest");
 const DynamoDBRequestRepository_1 = require("../../persistence/DynamoDBRequestRepository");
 const JiraService_1 = require("../../integrations/JiraService");
-const UserRole_1 = require("../../../domain/value-objects/UserRole");
 const errors_1 = require("../../../shared/errors");
 const utils_1 = require("./utils");
 /**
@@ -13,7 +12,7 @@ const utils_1 = require("./utils");
  *
  * Required headers:
  * - X-User-Id: User's ID
- * - X-User-Role: Must be APPROVER
+ * - X-User-Role: Any valid role (MVP: role gating disabled)
  * - X-User-Name: User's display name (e.g., "Jules")
  *
  * Path parameters:
@@ -28,10 +27,8 @@ const utils_1 = require("./utils");
 const handler = async (event) => {
     return (0, utils_1.withHandler)(event, async (evt, userContext) => {
         const origin = evt.headers['origin'] || evt.headers['Origin'];
-        // Only APPROVER role can approve/reject requests
-        if (userContext.userRole !== UserRole_1.UserRole.APPROVER) {
-            throw new errors_1.UnauthorizedError('Only APPROVER users can approve or reject requests');
-        }
+        // MVP: Role gating disabled - any authenticated user can approve/reject
+        // TODO: Re-enable for production: Only APPROVER role can approve/reject requests
         // Get request ID from path
         const requestId = (0, utils_1.getPathParameter)(evt, 'id');
         // Parse and validate request body

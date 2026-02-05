@@ -5,7 +5,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
  *
  * Required headers:
  * - X-User-Id: User's ID
- * - X-User-Role: Must be INTERNAL
+ * - X-User-Role: Any valid role (MVP: role gating disabled)
  * - X-User-Name: User's display name
  *
  * Path parameters:

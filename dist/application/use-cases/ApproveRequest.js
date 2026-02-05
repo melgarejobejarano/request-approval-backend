@@ -1,11 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ApproveRequestUseCase = void 0;
-const UserRole_1 = require("../../domain/value-objects/UserRole");
 const errors_1 = require("../../shared/errors");
 /**
  * Approve/Reject Request Use Case
- * Allows APPROVER users to approve or reject estimated requests
+ * Allows authenticated users to approve or reject estimated requests
+ *
+ * MVP: Role gating disabled - any authenticated user can approve/reject
+ * TODO: Re-enable for production with Cognito: Only APPROVER users can approve/reject
  */
 class ApproveRequestUseCase {
     requestRepository;
@@ -15,14 +17,15 @@ class ApproveRequestUseCase {
         this.jiraService = jiraService;
     }
     async execute(input) {
-        const { requestId, action, comment, userName, userRole } = input;
-        // Check permission based on action
-        if (action === 'approve' && !(0, UserRole_1.hasPermission)(userRole, UserRole_1.Permission.APPROVE_REQUEST)) {
-            throw new errors_1.UnauthorizedError('Only APPROVER users can approve requests');
-        }
-        if (action === 'reject' && !(0, UserRole_1.hasPermission)(userRole, UserRole_1.Permission.REJECT_REQUEST)) {
-            throw new errors_1.UnauthorizedError('Only APPROVER users can reject requests');
-        }
+        const { requestId, action, comment, userName } = input;
+        // MVP: Role gating disabled - any authenticated user can approve/reject
+        // TODO: Re-enable for production:
+        // if (action === 'approve' && !hasPermission(userRole, Permission.APPROVE_REQUEST)) {
+        //   throw new UnauthorizedError('Only APPROVER users can approve requests');
+        // }
+        // if (action === 'reject' && !hasPermission(userRole, Permission.REJECT_REQUEST)) {
+        //   throw new UnauthorizedError('Only APPROVER users can reject requests');
+        // }
         // Validate rejection requires comment
         if (action === 'reject' && (!comment || comment.trim().length === 0)) {
             throw new errors_1.ValidationError('Comment is required when rejecting a request');

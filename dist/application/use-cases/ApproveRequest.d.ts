@@ -15,7 +15,10 @@ export interface ApproveRequestOutput {
 }
 /**
  * Approve/Reject Request Use Case
- * Allows APPROVER users to approve or reject estimated requests
+ * Allows authenticated users to approve or reject estimated requests
+ *
+ * MVP: Role gating disabled - any authenticated user can approve/reject
+ * TODO: Re-enable for production with Cognito: Only APPROVER users can approve/reject
  */
 export declare class ApproveRequestUseCase {
     private readonly requestRepository;
